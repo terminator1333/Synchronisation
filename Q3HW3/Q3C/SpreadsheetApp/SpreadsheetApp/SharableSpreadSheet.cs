@@ -193,6 +193,9 @@ class SharableSpreadSheet
         globalLock.EnterReadLock(); //accessing global read lock
         try
         {
+            if(row1 == row2){ //if it's the same row, do not do anything
+                return;
+            }
             for (int c = 0; c < cols; c++)
             {
                 int i1 = row1 * cols + c;
@@ -238,6 +241,9 @@ class SharableSpreadSheet
         globalLock.EnterReadLock();
         try
         {
+            if(row1 == row2){ //if it's the same row, do not do anything
+                return;
+            }
             for (int r = 0; r < rows; r++)
             {
                 int i1 = r * cols + col1;
