@@ -29,7 +29,7 @@ class SharableSpreadSheet
     private void InitializeLocks()    //initializing partitioned locks (2nd layer) based on current size and userimit
     {
         int cellCount = rows * cols;
-        int lockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit, cellCount) : Math.Min(Environment.ProcessorCount * 2, cellCount));         //calculating number of locks: At least 1, capped by userLimit and cell count for balance
+        int lockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit + 1 - userLimit%2, cellCount + 1 - cellCount%2) : Math.Min(Environment.ProcessorCount * 2 + 1, cellCount + 1 - cellCount%2));         //calculating number of locks: At least 1, capped by userLimit and cell count for balance
         userLocks = new ReaderWriterLockSlim[lockCount]; //using a new number of locks, and initialising all to a readerwriter lock
         for (int i = 0; i < lockCount; i++)
             userLocks[i] = new ReaderWriterLockSlim();
@@ -39,7 +39,7 @@ class SharableSpreadSheet
     private void ResizeLocksIfNeeded()  // recalculating partition locks to adapt to new size, called under the globallock only
     {
         int cellCount = rows * cols;
-        int desiredLockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit, cellCount) : Math.Min(Environment.ProcessorCount * 2, cellCount)); //potential resizing
+        int lockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit + 1 - userLimit%2, cellCount + 1 - cellCount%2) : Math.Min(Environment.ProcessorCount * 2 + 1, cellCount + 1 - cellCount%2)); //potential resizing
 
         if (desiredLockCount != userLocks.Length) //resising only if needed
         {
