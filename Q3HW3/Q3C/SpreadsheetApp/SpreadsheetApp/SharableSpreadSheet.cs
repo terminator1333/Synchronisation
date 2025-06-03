@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -29,7 +29,7 @@ class SharableSpreadSheet
     private void InitializeLocks()    //initializing partitioned locks (2nd layer) based on current size and userimit
     {
         int cellCount = rows * cols;
-        int lockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit, cellCount) : Math.Min(Environment.ProcessorCount * 2, cellCount));         //calculating number of locks: At least 1, capped by userLimit and cell count for balance
+        int lockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit + 1 - userLimit%2, cellCount + 1 - cellCount%2) : Math.Min(Environment.ProcessorCount * 2 + 1, cellCount + 1 - cellCount%2));         //calculating number of locks: At least 1, capped by userLimit and cell count for balance
         userLocks = new ReaderWriterLockSlim[lockCount]; //using a new number of locks, and initialising all to a readerwriter lock
         for (int i = 0; i < lockCount; i++)
             userLocks[i] = new ReaderWriterLockSlim();
@@ -39,7 +39,7 @@ class SharableSpreadSheet
     private void ResizeLocksIfNeeded()  // recalculating partition locks to adapt to new size, called under the globallock only
     {
         int cellCount = rows * cols;
-        int desiredLockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit, cellCount) : Math.Min(Environment.ProcessorCount * 2, cellCount)); //potential resizing
+        int lockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit + 1 - userLimit%2, cellCount + 1 - cellCount%2) : Math.Min(Environment.ProcessorCount * 2 + 1, cellCount + 1 - cellCount%2)); //potential resizing
 
         if (desiredLockCount != userLocks.Length) //resising only if needed
         {
@@ -193,9 +193,6 @@ class SharableSpreadSheet
         globalLock.EnterReadLock(); //accessing global read lock
         try
         {
-            if(row1 == row2){ //if it's the same row, do not do anything
-                return;
-            }
             for (int c = 0; c < cols; c++)
             {
                 int i1 = row1 * cols + c;
@@ -241,9 +238,6 @@ class SharableSpreadSheet
         globalLock.EnterReadLock();
         try
         {
-            if(row1 == row2){ //if it's the same row, do not do anything
-                return;
-            }
             for (int r = 0; r < rows; r++)
             {
                 int i1 = r * cols + col1;
