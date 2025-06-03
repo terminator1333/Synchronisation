@@ -39,7 +39,7 @@ class SharableSpreadSheet
     private void ResizeLocksIfNeeded()  // recalculating partition locks to adapt to new size, called under the globallock only
     {
         int cellCount = rows * cols;
-        int lockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit + 1 - userLimit%2, cellCount + 1 - cellCount%2) : Math.Min(Environment.ProcessorCount * 2 + 1, cellCount + 1 - cellCount%2)); //potential resizing
+        int desiredLockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit + 1 - userLimit%2, cellCount + 1 - cellCount%2) : Math.Min(Environment.ProcessorCount * 2 + 1, cellCount + 1 - cellCount%2)); //potential resizing
 
         if (desiredLockCount != userLocks.Length) //resising only if needed
         {
