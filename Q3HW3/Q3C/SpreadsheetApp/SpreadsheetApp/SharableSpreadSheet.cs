@@ -187,12 +187,13 @@ class SharableSpreadSheet
 
     public void exchangeRows(int row1, int row2) //exchanging rows, this will need a global read lock and and local write lock
     {
-        ValidateRow(row1); //validating the 2 rows
-        ValidateRow(row2);
+
 
         globalLock.EnterReadLock(); //accessing global read lock
         try
         {
+            ValidateRow(row1); //validating the 2 rows
+            ValidateRow(row2);
             if(row1 == row2){ //if its the same row don't do anything
                 return;
             }
@@ -235,12 +236,13 @@ class SharableSpreadSheet
 
     public void exchangeCols(int col1, int col2) //exactly the same as exchangeRows, also a global read and local write operation
     {
-        ValidateCol(col1);
-        ValidateCol(col2);
+
 
         globalLock.EnterReadLock();
         try
         {
+            ValidateCol(col1); //validating the 2 columns
+            ValidateCol(col2);
             if(col1 == col2){ //if its the same row don't do anything
                 return;
             }
