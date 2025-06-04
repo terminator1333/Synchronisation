@@ -29,7 +29,7 @@ class SharableSpreadSheet
     private void InitializeLocks()    //initializing partitioned locks (2nd layer) based on current size and userimit
     {
         int cellCount = rows * cols;
-        int lockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit + 1 - userLimit%2, cellCount + 1 - cellCount%2) : Math.Min(Environment.ProcessorCount * 2 + 1, cellCount + 1 - cellCount%2));         //calculating number of locks: At least 1, capped by userLimit and cell count for balance
+        int lockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit + 1 - userLimit%2, cellCount + 1 - cellCount%2) : Math.Min(Environment.ProcessorCount * 2 + 1, cellCount + 1 - cellCount%2));     //calculating number of locks: At least 1, capped by userLimit and cell count for balance
         userLocks = new ReaderWriterLockSlim[lockCount]; //using a new number of locks, and initialising all to a readerwriter lock
         for (int i = 0; i < lockCount; i++)
             userLocks[i] = new ReaderWriterLockSlim();
@@ -39,7 +39,7 @@ class SharableSpreadSheet
     private void ResizeLocksIfNeeded()  // recalculating partition locks to adapt to new size, called under the globallock only
     {
         int cellCount = rows * cols;
-        int desiredLockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit + 1 - userLimit%2, cellCount + 1 - cellCount%2) : Math.Min(Environment.ProcessorCount * 2 + 1, cellCount + 1 - cellCount%2)); //potential resizing
+        int desiredLockCount = Math.Max(1, (userLimit > 0) ? Math.Min(userLimit + 1 - userLimit%2, cellCount + 1 - cellCount%2) : Math.Min(Environment.ProcessorCount * 2 + 1, cellCount + 1 - cellCount%2)); //recalculating potential resizing
 
         if (desiredLockCount != userLocks.Length) //resising only if needed
         {
@@ -79,32 +79,38 @@ class SharableSpreadSheet
     }
 
 
-    public string getCell(int row, int col)
+public string getCell(int row, int col)
+{
+    globalLock.EnterReadLock();  //acquiring the global lock first
+    try
     {
-        ValidateIndices(row, col);
-
-        globalLock.EnterReadLock();
-        var cellLock = GetLockForCell(row, col);
-        cellLock.EnterReadLock();
+        ValidateIndices(row, col);  // validating the indicies, if not good, exception will be thrown and global lock will be released
+        var cellLock = GetLockForCell(row, col); //getting the local lock
+        cellLock.EnterReadLock(); //acquiring the local lock
         try
         {
-            return data[row, col];
+            return data[row, col]; //returning the requested value, but only after completing the finally blocks
         }
         finally
         {
-            cellLock.ExitReadLock();
-            globalLock.ExitReadLock();
+            cellLock.ExitReadLock(); //releasing the local lock
         }
     }
+    finally
+    {
+        globalLock.ExitReadLock(); //releasing the global lock
+    }
+}
+
 
 
     public void setCell(int row, int col, string str)    //editing cell operation which needs globalLock read and cell lock write
     {
-        ValidateIndices(row, col); //validating
-
+        
         globalLock.EnterReadLock(); //since this is a local function, it has global read accessibility
         try
         {
+            ValidateIndices(row, col); //validating
             var cellLock = GetLockForCell(row, col);
             cellLock.EnterWriteLock(); //since its a local writer function, it has local write accessibility
             try
@@ -125,13 +131,15 @@ class SharableSpreadSheet
 
     public void addRow(int row1) //adding a row to the spreadsheet,this is a global write function
     {
-        if (row1 < -1 || row1 >= rows) throw new ArgumentOutOfRangeException(); //making sure the indexes are fine, -1 means adding it to the left of 0
 
 
         globalLock.EnterWriteLock(); //accessing the global write lock
         try
         {
-
+        if (row1 < -1 || row1 >= rows) {
+            throw new ArgumentOutOfRangeException(); //making sure the indexes are fine, -1 means adding it to the left of 0
+        }
+            
             string[,] newData = new string[rows + 1, cols]; //creating new data array with one more row
 
             for (int r = 0; r <= row1; r++) //all rows up to row1 stay the exact same so we just copy them
@@ -142,7 +150,6 @@ class SharableSpreadSheet
             for (int r = row1 + 1; r < rows + 1; r++)            //inserting an empty row after row1, shifting remaining rows 1 to the right
                 for (int c = 0; c < cols; c++)
                     newData[r, c] = (r == row1 + 1) ? "" : data[r - 1, c];
-
 
             data = newData; //replacing the old data and increasing the number of rows
             rows++;
@@ -157,11 +164,15 @@ class SharableSpreadSheet
 
     public void addCol(int col1) //very similar to addRow, just for col
     {
-        if (col1 < -1 || col1 >= cols) throw new ArgumentOutOfRangeException();
+        
 
         globalLock.EnterWriteLock();
         try
         {
+            if (col1 < -1 || col1 >= cols) { //making sure the inserted col1 value is ok
+                throw new ArgumentOutOfRangeException();
+            }
+            
             string[,] newData = new string[rows, cols + 1];
 
             for (int r = 0; r < rows; r++)
@@ -185,108 +196,144 @@ class SharableSpreadSheet
     }
 
 
-    public void exchangeRows(int row1, int row2) //exchanging rows, this will need a global read lock and and local write lock
+public void exchangeRows(int row1, int row2)
+{
+    globalLock.EnterReadLock(); //getting the global read lock
+    try
     {
+        ValidateRow(row1); //making sure the numbers are fine
+        ValidateRow(row2);
+        if (row1==row2) return; //if its the same row, exit
 
+        int totalCells = cols * 2; //the maximum amount of locks we will need
+        var locks = new ReaderWriterLockSlim[totalCells]; //new array to hold the acquired locks
+        var lockIndices = new int[totalCells]; //the lock indexes for each cell
+        for (int c = 0; c < cols; c++) //collecting all the needed locks to lock all the numbers
+        {
+            int idx1 =(row1*cols) + c; //index of the lock of the first cell 
+            int idx2= (row2*cols) + c; //index of the lock of the second cell
+            lockIndices[2*c]= idx1;
+            lockIndices[(2*c)+1] = idx2;
 
-        globalLock.EnterReadLock(); //accessing global read lock
+            locks[2*c] = GetLockForCell(row1, c); //getting the locks
+            locks[(2*c)+1] =GetLockForCell(row2, c);
+        }
+        Array.Sort(lockIndices, locks); //sorting by index
+
+        var uniqueLocks = new List<ReaderWriterLockSlim>(); //removing duplicate locks 
+        ReaderWriterLockSlim prevLock = null;
+        foreach (var l in locks) //checking according to the previous lock as they are sorted
+        {
+            if (!ReferenceEquals(l, prevLock))
+            {
+                uniqueLocks.Add(l); //adding the current lock
+                prevLock=l;//updating the previous lock
+            }
+        }
+        foreach (var l in uniqueLocks)
+        {
+            l.EnterWriteLock(); //geting the write lock for each one
+        }
+
         try
         {
-            ValidateRow(row1); //validating the 2 rows
-            ValidateRow(row2);
-            if(row1 == row2){ //if its the same row don't do anything
-                return;
-            }
-            for (int c = 0; c < cols; c++)
+            
+            for (int c = 0; c < cols; c++)//swapping the data in the two rows
             {
-                int i1 = row1 * cols + c;
-                int i2 = row2 * cols + c;
-
-                // ensuring consistent lock order to avoid deadlock
-                if (i1 > i2)
-                {
-                    (i1, i2) = (i2, i1);
-                    (row1, row2) = (row2, row1);
-                }
-
-                var lock1 = GetLockForCell(row1, c); //switching each one by order
-                var lock2 = GetLockForCell(row2, c);
-
-                lock1.EnterWriteLock(); //accessing a write lock for each cell (not using setcell to not risk deadlocks)
-                lock2.EnterWriteLock();
-                try
-                {
-                    string temp = data[row1, c]; //switching their values
-                    data[row1, c] = data[row2, c];
-                    data[row2, c] = temp;
-                }
-                finally
-                {
-                    lock2.ExitWriteLock(); //releasing local writing lock
-                    lock1.ExitWriteLock();
-                }
+                string temp =data[row1, c]; //temp val to save the seen data before replacing
+                data[row1, c]=data[row2, c];
+                data[row2, c]= temp;
             }
         }
         finally
         {
-            globalLock.ExitReadLock(); //releasing global reading lock
+            
+            for (int i = uniqueLocks.Count - 1; i >= 0; i--)
+            {
+                uniqueLocks[i].ExitWriteLock();//releasing all locks
+            }
         }
     }
-
-
-    public void exchangeCols(int col1, int col2) //exactly the same as exchangeRows, also a global read and local write operation
+    finally
     {
+        globalLock.ExitReadLock(); //releasing the global lock
+    }
+}
 
 
-        globalLock.EnterReadLock();
+
+public void exchangeCols(int col1, int col2)
+{
+    globalLock.EnterReadLock(); //getting the global read lock
+    try
+    {
+        ValidateCol(col1); //making sure the numbers are fine
+        ValidateCol(col2);
+        if (col1==col2) return; //if its the same col, exit
+
+        int totalCells = rows * 2; //the maximum amount of locks we will need
+        var locks = new ReaderWriterLockSlim[totalCells]; //new array to hold the acquired locks
+        var lockIndices = new int[totalCells]; //the lock indexes for each cell
+        for (int c = 0; c < rows; c++) //collecting all the needed locks to lock all the numbers
+        {
+            int idx1 = (c*cols) + col1; //index of the lock of the first cell 
+            int idx2 = (c*cols) + col2; //index of the lock of the second cell
+            lockIndices[2*c]= idx1;
+            lockIndices[(2*c)+1] = idx2;
+
+            locks[2*c] = GetLockForCell(c, col1); //getting the locks
+            locks[(2*c)+1] =GetLockForCell(c, col2);
+        }
+        Array.Sort(lockIndices, locks); //sorting by index
+
+        var uniqueLocks = new List<ReaderWriterLockSlim>(); //removing duplicate locks 
+        ReaderWriterLockSlim prevLock = null;
+        foreach (var l in locks) //checking according to the previous lock as they are sorted
+        {
+            if (!ReferenceEquals(l, prevLock))
+            {
+                uniqueLocks.Add(l); //adding the current lock
+                prevLock=l;//updating the previous lock
+            }
+        }
+        foreach (var l in uniqueLocks)
+        {
+            l.EnterWriteLock(); //geting the write lock for each one
+        }
+
         try
         {
-            ValidateCol(col1); //validating the 2 columns
-            ValidateCol(col2);
-            if(col1 == col2){ //if its the same row don't do anything
-                return;
-            }
-            for (int r = 0; r < rows; r++)
+            
+            for (int c = 0; c < rows; c++)//swapping the data in the two cols
             {
-                int i1 = r * cols + col1;
-                int i2 = r * cols + col2;
-
-                if (i1 > i2)
-                {
-                    (i1, i2) = (i2, i1);
-                    (col1, col2) = (col2, col1);
-                }
-
-                var lock1 = GetLockForCell(r, col1);
-                var lock2 = GetLockForCell(r, col2);
-
-                lock1.EnterWriteLock();
-                lock2.EnterWriteLock();
-                try
-                {
-                    string temp = data[r, col1];
-                    data[r, col1] = data[r, col2];
-                    data[r, col2] = temp;
-                }
-                finally
-                {
-                    lock2.ExitWriteLock();
-                    lock1.ExitWriteLock();
-                }
+                string temp =data[c, col1]; //temp val to save the seen data before replacing
+                data[c, col1]=data[c, col2];
+                data[c, col2]= temp;
             }
         }
         finally
         {
-            globalLock.ExitReadLock();
+            
+            for (int i = uniqueLocks.Count - 1; i >= 0; i--)
+            {
+                uniqueLocks[i].ExitWriteLock();//releasing all locks
+            }
         }
     }
-
-    public Tuple<int, int> searchString(string str)
+    finally
     {
-        globalLock.EnterReadLock();
+        globalLock.ExitReadLock(); //releasing the global lock
+    }
+}
+
+    public Tuple<int, int> searchString(string str) //search string function
+    {
+        globalLock.EnterReadLock(); //getting global read lock
+        
         try
         {
-            for (int r = 0; r < rows; r++)
+            Tuple<int, int> result = null;
+            for (int r = 0; r < rows; r++) //going through each row and checking if its the string we are looking for
             {
                 for (int c = 0; c < cols; c++)
                 {
@@ -295,25 +342,23 @@ class SharableSpreadSheet
                     try
                     {
                         if (data[r, c] == str)
-                            return Tuple.Create(r, c);   // **no early‐unlock**
+                            return Tuple.Create(r, c);   //returning the tuple, the finally segements will run anyways
                     }
                     finally
                     {
-                        cellLock.ExitReadLock();
+                        cellLock.ExitReadLock();//exiting this local lock
                     }
                 }
             }
-            return null;                                  // ← missing in your code
+            return null;                                  //if one was not found, return null
         }
         finally
         {
-            globalLock.ExitReadLock();
+            globalLock.ExitReadLock(); //finally release the global lock
         }
     }
 
 
-
-    // Save operation acquires global write lock (blocks structure and cell ops)
     public void save(string filename) //the save operation, it requires a global write lock
     {
         globalLock.EnterWriteLock(); //accessing the global write lock
