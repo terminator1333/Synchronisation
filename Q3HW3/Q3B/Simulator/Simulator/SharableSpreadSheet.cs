@@ -241,7 +241,7 @@ class SharableSpreadSheet
         globalLock.EnterReadLock();
         try
         {
-            if(row1 == row2){ //if it's the same row, don't do anything
+            if(col1 == col2){ //if it's the same row, don't do anything
                 return;
             }
             for (int r = 0; r < rows; r++)
